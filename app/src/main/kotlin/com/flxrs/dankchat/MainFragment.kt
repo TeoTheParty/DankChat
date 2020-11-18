@@ -1,12 +1,9 @@
 package com.flxrs.dankchat
 
-import android.Manifest
 import android.app.Activity
 import android.content.*
-import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
 import android.text.SpannableStringBuilder
@@ -27,9 +24,7 @@ import androidx.core.content.FileProvider
 import androidx.core.content.edit
 import androidx.core.net.toFile
 import androidx.core.net.toUri
-import androidx.core.view.isVisible
-import androidx.core.view.postDelayed
-import androidx.core.view.updateLayoutParams
+import androidx.core.view.*
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.lifecycleScope
@@ -64,7 +59,6 @@ import dagger.hilt.android.AndroidEntryPoint
 import java.io.File
 import java.io.IOException
 import java.util.*
-import kotlin.math.max
 import kotlin.math.roundToInt
 
 @AndroidEntryPoint
@@ -229,15 +223,20 @@ class MainFragment : Fragment() {
                 }
             }
 
-            window.decorView.setOnApplyWindowInsetsListener { _, insets ->
-                binding.showActionbarFab.apply {
-                    if (resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT && isVisible) {
-                        y = when {
-                            binding.input.hasFocus() -> max(insets.stableInsetTop.toFloat() - insets.systemWindowInsetTop, 0f)
-                            else -> insets.stableInsetTop.toFloat()
-                        }
+            ViewCompat.setOnApplyWindowInsetsListener(binding.showActionbarFab) { v, insets ->
+                if (resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT && v.isVisible) {
+                    v.y = when {
+                        binding.input.hasFocus() -> 0f
+                        else -> insets
+                            .getInsets(WindowInsetsCompat.Type.displayCutout())
+                            .top.toFloat()
                     }
                 }
+
+                insets
+            }
+            ViewCompat.setOnApplyWindowInsetsListener(binding.inputLayout) { v, insets ->
+                v.updatePadding(bottom = insets.getInsets(WindowInsetsCompat.Type.systemBars()).bottom)
                 insets
             }
 
@@ -346,7 +345,7 @@ class MainFragment : Fragment() {
             R.id.menu_open -> openChannel()
             R.id.menu_remove -> removeChannel()
             R.id.menu_reload_emotes -> reloadEmotes()
-            R.id.menu_choose_media -> checkPermissionForGallery()
+            R.id.menu_choose_media -> showNuulsUploadDialogIfNotAcknowledged { requestGalleryMedia.launch() }
             R.id.menu_capture_image -> startCameraCapture()
             R.id.menu_capture_video -> startCameraCapture(captureVideo = true)
             R.id.menu_hide -> viewModel.appbarEnabled.value = false
@@ -570,15 +569,6 @@ class MainFragment : Fragment() {
         } else action()
     }
 
-    private fun checkPermissionForGallery() {
-        showNuulsUploadDialogIfNotAcknowledged {
-            when (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
-                PackageManager.PERMISSION_GRANTED -> requestGalleryPermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                else -> requestGalleryMedia.launch()
-            }
-        }
-    }
-
     private fun startCameraCapture(captureVideo: Boolean = false) {
         val packageManager = activity?.packageManager ?: return
         val packageName = activity?.packageName ?: return
@@ -608,33 +598,14 @@ class MainFragment : Fragment() {
 
     private fun changeActionBarVisibility(enabled: Boolean) {
         hideKeyboard()
-        binding.input.clearFocus()
-        val isDarkMode = preferences.getBoolean(getString(R.string.preference_dark_theme_key), true)
-        var lightModeFlags = 0
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1 && !isDarkMode) {
-            lightModeFlags = (lightModeFlags or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR or View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR)
-        }
+        (activity as? MainActivity)?.setFullScreen(!enabled)
 
-        if (enabled) {
-            binding.root.systemUiVisibility = View.VISIBLE or lightModeFlags
-            (activity as? AppCompatActivity)?.supportActionBar?.show()
-            binding.showActionbarFab.visibility = View.GONE
-            binding.tabs.visibility = View.VISIBLE
-        } else {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && activity?.isInMultiWindowMode == false) {
-                binding.root.systemUiVisibility = (View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                        or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                        or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                        or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                        or View.SYSTEM_UI_FLAG_FULLSCREEN
-                        or lightModeFlags)
-            }
-
-            (activity as? AppCompatActivity)?.supportActionBar?.hide()
-            binding.tabs.visibility = View.GONE
-            binding.showActionbarFab.visibility = View.VISIBLE
+        with(binding) {
+            input.clearFocus()
+            showActionbarFab.isVisible = !enabled
+            tabs.isVisible = enabled
+            root.requestApplyInsets()
         }
-        binding.root.requestApplyInsets()
     }
 
     private fun clear() {
@@ -881,44 +852,29 @@ class MainFragment : Fragment() {
 
         var wasLandScapeNotFullscreen = false
         setOnFocusChangeListener { _, hasFocus ->
-            val isDarkMode = preferences.getBoolean(getString(R.string.preference_dark_theme_key), true)
-            var lightModeFlags = 0
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1 && !isDarkMode) {
-                lightModeFlags = (lightModeFlags or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
-                        or View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR)
-            }
-
-            binding.root.systemUiVisibility = when {
-                !hasFocus && wasLandScapeNotFullscreen && resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE -> {
+            when {
+                !hasFocus && wasLandScapeNotFullscreen && isLandscape -> {
                     wasLandScapeNotFullscreen = false
-                    (activity as? AppCompatActivity)?.supportActionBar?.show()
                     binding.showActionbarFab.visibility = View.GONE
                     binding.tabs.visibility = View.VISIBLE
-                    View.VISIBLE or lightModeFlags
+                    (activity as? MainActivity)?.setFullScreen(false)
                 }
                 !hasFocus && binding.showActionbarFab.isVisible -> {
                     wasLandScapeNotFullscreen = false
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && activity?.isInMultiWindowMode == true) {
-                        View.VISIBLE or lightModeFlags
-                    } else {
-                        (View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                                or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                                or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                                or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                                or View.SYSTEM_UI_FLAG_FULLSCREEN
-                                or lightModeFlags)
-                    }
+                    (activity as? MainActivity)?.setFullScreen(true, changeActionBarVisibility = false)
                 }
-                hasFocus && !binding.showActionbarFab.isVisible && resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE -> {
+                hasFocus && !binding.showActionbarFab.isVisible && isLandscape -> {
                     wasLandScapeNotFullscreen = true
-                    (activity as? AppCompatActivity)?.supportActionBar?.hide()
                     binding.showActionbarFab.visibility = View.VISIBLE
                     binding.tabs.visibility = View.GONE
-                    View.VISIBLE or lightModeFlags
+                    (activity as? MainActivity)?.apply {
+                        setFullScreen(false, changeActionBarVisibility = false)
+                        supportActionBar?.hide()
+                    }
                 }
                 else -> {
                     wasLandScapeNotFullscreen = false
-                    View.VISIBLE or lightModeFlags
+                    (activity as? MainActivity)?.setFullScreen(false, changeActionBarVisibility = false)
                 }
             }
             binding.root.requestApplyInsets()

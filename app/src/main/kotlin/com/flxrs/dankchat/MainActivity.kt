@@ -1,12 +1,18 @@
 package com.flxrs.dankchat
 
 import android.content.*
+import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.util.Log
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import androidx.databinding.DataBindingUtil
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import androidx.navigation.NavController
 import androidx.navigation.findNavController
@@ -14,6 +20,7 @@ import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
 import androidx.preference.PreferenceManager
 import com.flxrs.dankchat.chat.mention.MentionViewModel
+import com.flxrs.dankchat.databinding.MainActivityBinding
 import com.flxrs.dankchat.preferences.*
 import com.flxrs.dankchat.service.NotificationService
 import com.flxrs.dankchat.utils.dialog.AddChannelDialogResultHandler
@@ -22,23 +29,29 @@ import com.flxrs.dankchat.utils.extensions.navigateSafe
 import dagger.hilt.android.AndroidEntryPoint
 
 @AndroidEntryPoint
-class MainActivity : AppCompatActivity(R.layout.main_activity), AddChannelDialogResultHandler, MessageHistoryDisclaimerResultHandler, PreferenceFragmentCompat.OnPreferenceStartFragmentCallback {
+class MainActivity : AppCompatActivity(), AddChannelDialogResultHandler, MessageHistoryDisclaimerResultHandler, PreferenceFragmentCompat.OnPreferenceStartFragmentCallback {
     private val channels = mutableListOf<String>()
     private val viewModel: DankChatViewModel by viewModels()
     private val mentionViewModel: MentionViewModel by viewModels()
+
     private lateinit var twitchPreferences: DankChatPreferenceStore
     private lateinit var broadcastReceiver: BroadcastReceiver
-    private var notificationService: NotificationService? = null
-    private val pendingChannelsToClear = mutableListOf<String>()
-    private val navController: NavController by lazy { findNavController(R.id.main_content) }
 
-    private val twitchServiceConnection = TwitchServiceConnection()
+    private var notificationService: NotificationService? = null
+    private val notificationServiceConnection = NotificationServiceConnection()
+    private val pendingChannelsToClear = mutableListOf<String>()
+
+    private val navController: NavController by lazy { findNavController(R.id.main_content) }
+    private val windowInsetsController: WindowInsetsControllerCompat? by lazy { ViewCompat.getWindowInsetsController(binding.root) }
+    private lateinit var binding: MainActivityBinding
+
     var isBound = false
     var channelToOpen = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        binding = DataBindingUtil.setContentView(this, R.layout.main_activity)
         broadcastReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) = handleShutDown()
         }
@@ -72,7 +85,7 @@ class MainActivity : AppCompatActivity(R.layout.main_activity), AddChannelDialog
             try {
                 isBound = true
                 ContextCompat.startForegroundService(this, it)
-                bindService(it, twitchServiceConnection, Context.BIND_AUTO_CREATE)
+                bindService(it, notificationServiceConnection, Context.BIND_AUTO_CREATE)
             } catch (t: Throwable) {
                 Log.e(TAG, Log.getStackTraceString(t))
             }
@@ -88,7 +101,7 @@ class MainActivity : AppCompatActivity(R.layout.main_activity), AddChannelDialog
 
             isBound = false
             try {
-                unbindService(twitchServiceConnection)
+                unbindService(notificationServiceConnection)
             } catch (t: Throwable) {
                 Log.e(TAG, Log.getStackTraceString(t))
             }
@@ -138,6 +151,29 @@ class MainActivity : AppCompatActivity(R.layout.main_activity), AddChannelDialog
 
     fun setTTSEnabled(enabled: Boolean) = notificationService?.setTTSEnabled(enabled)
 
+    fun setFullScreen(enabled: Boolean, changeActionBarVisibility: Boolean = true) {
+        WindowCompat.setDecorFitsSystemWindows(window, !enabled)
+        when {
+            enabled -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && !isInMultiWindowMode) {
+                    windowInsetsController?.apply {
+                        hide(WindowInsetsCompat.Type.systemBars())
+                        systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_BARS_BY_TOUCH
+                    }
+                }
+                if (changeActionBarVisibility) {
+                    supportActionBar?.hide()
+                }
+            }
+            else -> {
+                windowInsetsController?.show(WindowInsetsCompat.Type.systemBars())
+                if (changeActionBarVisibility) {
+                    supportActionBar?.show()
+                }
+            }
+        }
+    }
+
     private fun handleShutDown() {
         LocalBroadcastManager.getInstance(this).unregisterReceiver(broadcastReceiver)
         stopService(Intent(this, NotificationService::class.java))
@@ -145,7 +181,7 @@ class MainActivity : AppCompatActivity(R.layout.main_activity), AddChannelDialog
         android.os.Process.killProcess(android.os.Process.myPid())
     }
 
-    private inner class TwitchServiceConnection : ServiceConnection {
+    private inner class NotificationServiceConnection : ServiceConnection {
         override fun onServiceConnected(className: ComponentName, service: IBinder) {
             val binder = service as NotificationService.LocalBinder
             notificationService = binder.service
