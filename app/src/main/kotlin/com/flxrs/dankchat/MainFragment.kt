@@ -778,7 +778,11 @@ class MainFragment : Fragment() {
                 return@setStartIconOnClickListener
             }
 
-            if (isLandscape) hideKeyboard()
+            if (isLandscape) {
+                hideKeyboard()
+                binding.input.clearFocus()
+            }
+
             val heightScaleFactor = 0.5
             binding.apply {
                 bottomSheetViewPager.adapter = emoteMenuAdapter
